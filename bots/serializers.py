@@ -621,6 +621,24 @@ class AutomaticLeaveSettingsJSONField(serializers.JSONField):
     pass
 
 
+@extend_schema_field(
+    {
+        "type": "object",
+        "properties": {
+            "disable_mixed_audio_packets": {
+                "type": "boolean",
+                "description": "Whether to disable mixed audio packets in favor of transcription frames. When True, the bot will use per-participant transcription frames instead of mixed audio for better speaker identification.",
+                "default": True,
+            },
+        },
+        "required": [],
+        "additionalProperties": False,
+    }
+)
+class AudioSettingsJSONField(serializers.JSONField):
+    pass
+
+
 def get_webhook_trigger_enum():
     """Get available webhook trigger types from models"""
     from .models import WebhookTriggerTypes
@@ -1305,6 +1323,12 @@ class CreateBotSerializer(BotValidationMixin, serializers.Serializer):
 
     automatic_leave_settings = AutomaticLeaveSettingsJSONField(default=dict, required=False)
 
+    audio_settings = AudioSettingsJSONField(
+        help_text="Audio processing settings for the bot.",
+        required=False,
+        default={"disable_mixed_audio_packets": True},
+    )
+
     def validate_automatic_leave_settings(self, value):
         # Set default values if not provided
         defaults = asdict(AutomaticLeaveConfiguration())
@@ -1321,6 +1345,35 @@ class CreateBotSerializer(BotValidationMixin, serializers.Serializer):
             # Set default if not provided
             if param not in value:
                 value[param] = default
+
+        return value
+
+    AUDIO_SETTINGS_SCHEMA = {
+        "type": "object",
+        "properties": {
+            "disable_mixed_audio_packets": {"type": "boolean"},
+        },
+        "required": [],
+        "additionalProperties": False,
+    }
+
+    def validate_audio_settings(self, value):
+        if value is None:
+            return value
+
+        # Define defaults
+        defaults = {"disable_mixed_audio_packets": True}
+
+        try:
+            jsonschema.validate(instance=value, schema=self.AUDIO_SETTINGS_SCHEMA)
+        except jsonschema.exceptions.ValidationError as e:
+            raise serializers.ValidationError(e.message)
+
+        # If at least one attribute is provided, apply defaults for any missing attributes
+        if value:
+            for key, default_value in defaults.items():
+                if key not in value:
+                    value[key] = default_value
 
         return value
 

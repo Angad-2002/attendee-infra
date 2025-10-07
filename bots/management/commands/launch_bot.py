@@ -27,6 +27,7 @@ class Command(BaseCommand):
         parser.add_argument("--rtmpsettings", type=str, help="RTMP Settings", default="null")
         parser.add_argument("--recording_settings", type=str, help="Recording Settings", default="null")
         parser.add_argument("--websocket_settings", type=str, help="Websocket Settings", default="null")
+        parser.add_argument("--audio_settings", type=str, help="Audio Settings", default='{"disable_mixed_audio_packets": true}')
         parser.add_argument("--botname", type=str, help="Bot Name", required=True)
         parser.add_argument("--projectid", type=str, help="Project ID", required=True)
 
@@ -40,10 +41,13 @@ class Command(BaseCommand):
         recording_settings = json.loads(options.get("recording_settings")) if options.get("recording_settings") else None
         bot_name = options["botname"]
         websocket_settings = json.loads(options.get("websocket_settings")) if options.get("websocket_settings") else None
+        audio_settings = json.loads(options.get("audio_settings"))
+        
         settings = {
             "rtmp_settings": rtmp_settings,
             "recording_settings": recording_settings,
             "websocket_settings": websocket_settings,
+            "audio_settings": audio_settings,
         }
 
         bot = Bot.objects.create(

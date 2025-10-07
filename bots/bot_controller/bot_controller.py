@@ -49,7 +49,7 @@ from bots.models import (
 )
 from bots.webhook_payloads import chat_message_webhook_payload, participant_event_webhook_payload, utterance_webhook_payload
 from bots.webhook_utils import trigger_webhook
-from bots.websocket_payloads import mixed_audio_websocket_payload
+from bots.websocket_payloads import mixed_audio_websocket_payload, transcription_websocket_payload
 
 from .audio_output_manager import AudioOutputManager
 from .bot_resource_snapshot_taker import BotResourceSnapshotTaker
@@ -92,6 +92,19 @@ class BotController:
 
     def disable_incoming_video_for_web_bots(self):
         return not (self.pipeline_configuration.record_video or self.pipeline_configuration.rtmp_stream_video)
+
+    def disable_mixed_audio_packets(self):
+        """Check if mixed audio packets should be disabled in favor of transcription frames"""
+        audio_settings = self.bot_in_db.settings.get("audio_settings", {})
+        return audio_settings.get("disable_mixed_audio_packets", True)
+
+    def get_bot_device_id(self):
+        """Get the bot's own device ID from the adapter's participants info"""
+        if hasattr(self.adapter, 'participants_info'):
+            for device_id, participant_info in self.adapter.participants_info.items():
+                if participant_info.get("isCurrentUser", False):
+                    return device_id
+        return None
 
     def get_google_meet_bot_adapter(self):
         from bots.google_meet_bot_adapter import GoogleMeetBotAdapter
@@ -253,6 +266,11 @@ class BotController:
         if self.gstreamer_pipeline:
             self.gstreamer_pipeline.on_mixed_audio_raw_data_received_callback(chunk)
 
+        # Skip WebSocket transmission if mixed audio packets are disabled
+        if self.disable_mixed_audio_packets():
+            logger.debug("Mixed audio packets disabled, skipping WebSocket transmission")
+            return
+
         if not self.websocket_audio_client:
             return
 
@@ -268,6 +286,28 @@ class BotController:
         )
 
         self.websocket_audio_client.send_async(payload)
+
+    def send_transcription_to_pipecat(self, speaker_id: str, speaker_name: str, text: str, is_final: bool, timestamp_ms: int, duration_ms: int):
+        """Send transcription frame with speaker information to Pipecat via WebSocket"""
+        if not self.websocket_audio_client:
+            return
+
+        if not self.websocket_audio_client.started():
+            logger.info("Starting websocket audio client for transcription...")
+            self.websocket_audio_client.start()
+
+        payload = transcription_websocket_payload(
+            speaker_id=speaker_id,
+            speaker_name=speaker_name,
+            text=text,
+            is_final=is_final,
+            timestamp_ms=timestamp_ms,
+            duration_ms=duration_ms,
+            bot_object_id=self.bot_in_db.object_id,
+        )
+
+        self.websocket_audio_client.send_async(payload)
+        logger.info(f"Sent transcription to Pipecat: [{speaker_name}]: {text}")
 
     def get_meeting_type(self):
         meeting_type = meeting_type_from_url(self.bot_in_db.meeting_url)
@@ -1090,6 +1130,20 @@ class BotController:
         )
 
         RecordingManager.set_recording_transcription_in_progress(recording_in_progress)
+
+        # Send transcription to Pipecat if WebSocket client is available and transcription frames are enabled
+        # BUT ONLY for other participants, not the bot itself (to avoid feedback loops)
+        if (self.websocket_audio_client and 
+            self.disable_mixed_audio_packets() and 
+            message["participant_uuid"] != self.get_bot_device_id()):
+            self.send_transcription_to_pipecat(
+                speaker_id=message["participant_uuid"],
+                speaker_name=message["participant_full_name"],
+                text=message["text"],
+                is_final=True,  # Closed captions are typically final
+                timestamp_ms=message["timestamp_ms"],
+                duration_ms=message["duration_ms"],
+            )
 
     def process_individual_audio_chunk(self, message):
         from bots.tasks.process_utterance_task import process_utterance

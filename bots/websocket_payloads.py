@@ -47,3 +47,29 @@ def mixed_audio_websocket_payload(chunk: bytes, input_sample_rate: int, output_s
             "sample_rate": output_sample_rate,
         },
     }
+
+
+def transcription_websocket_payload(
+    speaker_id: str,
+    speaker_name: str,
+    text: str,
+    is_final: bool,
+    timestamp_ms: int,
+    duration_ms: int,
+    bot_object_id: str
+) -> dict:
+    """
+    Package transcription data with speaker information for websocket transmission.
+    """
+    return {
+        "trigger": RealtimeTriggerTypes.type_to_api_code(RealtimeTriggerTypes.TRANSCRIPTION_FRAME),
+        "bot_id": bot_object_id,
+        "data": {
+            "speaker_id": speaker_id,
+            "speaker_name": speaker_name,
+            "text": text,
+            "is_final": is_final,
+            "timestamp_ms": timestamp_ms,
+            "duration_ms": duration_ms,
+        },
+    }
